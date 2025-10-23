@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 # import geopandas as gpd
+import operator
 
 #identify which agents has any negative utility across their top 5 plans. returns 1 if there is a negative
 def neg_utility_somewhere(row):
@@ -241,13 +242,13 @@ def calculate_travel_utility(trips, distances, durations, subpopulation):
         case "ev_high":
             betaMon = 0.5
     for i in range(len(trips)):
-        #print(trips[i])
+        # print(trips[i])
         STotal = 0
         transferCount = count_transfers(trips[i])
         for j in range(len(trips[i])):
-            #print(trips[i][j])
-            #print("distance is: "+str(distances[i][j]))
-            #print("duration is: "+str(durations[i][j]))
+            # print(trips[i][j])
+            # print("distance is: "+str(distances[i][j]))
+            # print("duration is: "+str(durations[i][j]))
             match trips[i][j]:
                 case "car":
                     CMode = -5
@@ -259,7 +260,7 @@ def calculate_travel_utility(trips, distances, durations, subpopulation):
                         gammaDist = -5e-5 
                     else:
                         gammaDist = 0
-                    #print("gamma dist: "+str(gammaDist))
+                    # print("gamma dist: "+str(gammaDist))
                 case "car_passenger":
                     CMode = -5
                     betaTrav = 0
@@ -334,3 +335,128 @@ def calculate_travel_utility(trips, distances, durations, subpopulation):
     return utilities
 
 
+def get_activities(activity_modes, activity_indices):
+    activities = []
+    for i in activity_indices:
+        activities.append(activity_modes[i])
+    return activities
+
+def get_activity_durations(activity_indices, all_durations, all_activities_trips):
+    activity_start_times = []
+    activity_end_times = []
+    all_durations = pd.to_timedelta(all_durations, errors="coerce").seconds
+
+    for i in range(len(activity_indices)):
+        schedEndTime = all_durations[activity_indices[i]]
+        if activity_indices[i]==0:
+            startTime = 0
+        else:
+            prevEndTime = all_durations[activity_indices[i-1]]
+            x1 = activity_indices[i-1]+1
+            x2 = activity_indices[i]
+            startTime = prevEndTime+sum(all_durations[x1:x2])  
+        if startTime >= schedEndTime:
+            realEndTime = startTime +1
+        else:
+            realEndTime = schedEndTime
+        activity_start_times.append(startTime)
+        activity_end_times.append(realEndTime)
+    # print("start: "+str(activity_start_times))
+    # print("end: "+str(activity_end_times))
+    
+    for i in range(1, len(activity_end_times)):
+        if activity_end_times[i] < activity_end_times[i-1]:
+            activity_end_times[i] += 24*3600  #account for wraparound
+    # print("end new: "+str(activity_end_times))
+   
+    activity_durations = list(map(operator.sub, list(activity_end_times), list(activity_start_times)))
+   
+    if all_activities_trips[0] == all_activities_trips[-1]:
+        activity_durations[0]=activity_durations[0]+((24*3600)-activity_start_times[-1]) #make it wrap around to midnight
+        activity_durations.pop() #remove last activity duration as it has been included in the frist activity
+    
+    for k in range(len(activity_durations)):
+        if activity_durations[k]== 0:
+            activity_durations[k] = 1e-5
+    
+    return(activity_durations)     
+# TODO: account for non-wraparound effect - HOW DOES THIS WORK
+# TODO: when accounting for wraparound effect the final "end time" is basically ignored - is this ok?
+# TODO: account for if someone arrives after departure -> set activity length to 1 second and continue on
+# TODO: cutoff when not achieving full activity plan - up to 32 hours / journey longer than expected departure
+
+def calculate_activity_utility(activities, durations):
+    utilities = []
+    # betaEarly = 0
+    # betaLate = 0
+    betaPerf = 10
+    # betaWait = 0
+    # betaShort = 0
+    prio = 1
+    durations = [a/3600 for a in durations]  #put it back into hours
+    if activities[-1] == activities[0]:
+        activities.pop() #remove the last activity for wraparound
+    for i in range(len(activities)):
+        # print(activities[i])
+        # print(durations[i])
+        STotal = 0
+        match activities[i]:
+            case "home":
+                tMin = 1
+                tTyp = 10
+            case "work":
+                tMin = 6
+                tTyp = 9
+            case "other":
+                tMin = 1/6
+                tTyp = 0.5
+            case "shop": 
+                tMin = 0.5
+                tTyp = 0.5
+            case "education":
+                tMin = 6
+                tTyp = 6
+            case "visit":
+                tMin = 0.5
+                tTyp = 2
+            case "medical":
+                tMin = 0.5
+                tTyp = 1
+            case "business":
+                tMin = 0.5
+                tTyp = 1
+            case "escort_home":
+                tMin = 1/12
+                tTyp = 1/12
+            case "escort_work":
+                tMin = 1/12
+                tTyp = 1/12
+            case "escort_business":
+                tMin = 1/12
+                tTyp = 1/12
+            case "escort_education":
+                tMin = 1/12
+                tTyp = 1/12
+            case "escort_other":
+                tMin = 1/12
+                tTyp = 1/12
+            case "escort_shop":
+                tMin = 1/12
+                tTyp = 1/12      
+            case _:
+                print("dodgy activity type")
+                tMin = np.nan
+                tTyp = np.nan
+        # print("tTyp: "+str(tTyp))
+        t0 = tTyp*np.exp(-1/prio)
+        # print("t0: "+str(t0))
+        SDur = betaPerf*tTyp*np.log(durations[i]/t0)
+        SWait = 0 #since betaWait is zero. Otherwise, will need to encode open/close times for activities to find out how long waiting       
+        SLate = 0 #since betaLate is zero. Otherwise, will need to encode latest start times for activities to find out how late   
+        SEarly = 0 #since betaEarly is zero. Otherwise, will need to encode earliest end times for activities to find out how early   
+        SShort = 0 #since betaEarly is zero/undefined. Otherwise, will need to use shortesr durations for activities to find out if too short   
+        STotal_temp = SDur + SWait + SLate + SEarly + SShort
+        STotal += STotal_temp
+        # print("STotal: "+str(STotal))
+        utilities.append(STotal)
+    return utilities

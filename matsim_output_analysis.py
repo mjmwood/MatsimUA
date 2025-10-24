@@ -225,7 +225,7 @@ def count_transfers(modes_in_leg):
     return transfers
 
 #calculate the utility lost across trips in a plan. returns a list of the utility from each trip
-def calculate_travel_utility(trips, distances, durations, subpopulation):
+def calculate_travel_utility(trips, distances, durations, subpopulation, routes, tolls):
     utilities = []
     betaTrans = -1
     match subpopulation:
@@ -321,7 +321,8 @@ def calculate_travel_utility(trips, distances, durations, subpopulation):
                     gammaDist = -2e-4
             STime = betaTrav*(durations[i][j]/3600)
             # print("STime: "+str(STime))
-            SMon = 0
+            tollcost = assign_tolls(tolls, routes[i][j], trips[i][j])
+            SMon = betaMon * tollcost
             # print("Smon: "+str(SMon))
             SDist = (betaDist + (betaMon*gammaDist))*distances[i][j]
             # print("SDist: "+str(SDist))
@@ -460,3 +461,19 @@ def calculate_activity_utility(activities, durations):
         # print("STotal: "+str(STotal))
         utilities.append(STotal)
     return utilities
+
+def assign_tolls(tolls, route, mode):
+    toll_sum_temp = 0
+    route_temp = route.split(' ')
+    if mode == "car": #right? only drivers have to pay tolls? TODO: check this
+        for j in route_temp:
+            # print(j)
+            try:
+                toll_temp = tolls[str(j)]
+            except KeyError:
+                toll_temp = 0
+            else:
+                toll_temp = tolls[str(j)]
+            toll_sum_temp += float(toll_temp)
+    # print(tolls_list)        
+    return(toll_sum_temp)

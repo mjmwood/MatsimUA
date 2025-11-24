@@ -179,40 +179,49 @@ def get_f_value(delta_u_ij, delta_m_ij):
     return f
 
 #groups individual legs into split out trips. 
-def group_legs_into_trips(activity_mode_list, activity_indices):
+def group_legs_into_trips(activity_mode_list, activity_indices, stuck_id):
     modes = []
     for i in range(len(activity_indices)):
-        if i>0:
+        if (i>0) & (i<stuck_id):
             modes_temp = activity_mode_list[activity_indices[i-1]+1:activity_indices[i]]
             modes.append(list(modes_temp))
     return modes
 
-#sums distance or duration of legs in each trip
-def group_legs_into_trips_d_sum(distance_or_duration, activity_indices, which):
-    if which == "distance":
-        distance_or_duration = pd.to_numeric(distance_or_duration, errors="coerce")
-    elif which == "duration":
-        distance_or_duration = pd.to_timedelta(distance_or_duration, errors="coerce").seconds
-    else:
-        print("incorrect input")  
-    values = []
-    for i in range(1, len(activity_indices)):
-            val_temp = sum(distance_or_duration[activity_indices[i-1]+1:activity_indices[i]])
-            values.append(val_temp)
-    return values
+# #sums distance or duration of legs in each trip
+# def group_legs_into_trips_d_sum(distance_or_duration, activity_indices, which):
+#     if which == "distance":
+#         distance_or_duration = pd.to_numeric(distance_or_duration, errors="coerce")
+#     elif which == "duration":
+#         distance_or_duration = pd.to_timedelta(distance_or_duration, errors="coerce").seconds
+#     else:
+#         print("incorrect input")  
+#     values = []
+#     for i in range(1, len(activity_indices)):
+#             val_temp = sum(distance_or_duration[activity_indices[i-1]+1:activity_indices[i]])
+#             values.append(val_temp)
+#     return values
 
-def group_legs_into_trips_d(distance_or_duration, activity_indices, which):
+def group_legs_into_trips(activity_mode_list, activity_indices, stuck_id):
+    modes = []
+    for i in range(len(activity_indices)):
+        if (i>0) and (activity_indices[i]<stuck_id-1):
+            modes_temp = activity_mode_list[activity_indices[i-1]+1:activity_indices[i]]
+            modes.append(list(modes_temp))
+    return modes
+
+def group_legs_into_trips_d(distance_or_duration, activity_indices, stuck_id, which):
     values = []
     if which == "distance":
         distance_or_duration = pd.to_numeric(distance_or_duration, errors="coerce")
     elif which == "duration":
-        distance_or_duration = pd.to_timedelta(distance_or_duration, errors="coerce").seconds
+        distance_or_duration = pd.to_timedelta(distance_or_duration, errors="coerce").total_seconds()
     else:
         print("incorrect input")  
     values = []
     for i in range(1, len(activity_indices)):
-            val_temp = distance_or_duration[activity_indices[i-1]+1:activity_indices[i]]
-            values.append(list(val_temp))
+            if activity_indices[i] < stuck_id-1:
+                val_temp = distance_or_duration[activity_indices[i-1]+1:activity_indices[i]]
+                values.append(list(val_temp))
     return values
 
 #count how many transfers are made in a trip
@@ -220,12 +229,23 @@ def count_transfers(modes_in_leg):
     publicTrans = ["subway","bus","rail", "tram","ferry", "pt"]
     transfers = 0
     for i in range(len(modes_in_leg)-1):
-        if modes_in_leg[i] in publicTrans and modes_in_leg[i + 1] in publicTrans:
+        if (modes_in_leg[i] in publicTrans and modes_in_leg[i + 1] in publicTrans) :
+            transfers += 1
+    for j in range(len(modes_in_leg)-2):
+        if (modes_in_leg[j] in publicTrans and modes_in_leg[j + 2] in publicTrans and modes_in_leg[j+1]=="walk") :
             transfers += 1
     return transfers
 
 #calculate the utility lost across trips in a plan. returns a list of the utility from each trip
-def calculate_travel_utility(trips, distances, durations, subpopulation, routes, tolls):
+def calculate_travel_utility(total_activities_modes, total_durations, total_distances, activity_indices, subpopulation, routes, tolls, stuck_id):
+    
+    trips = group_legs_into_trips(total_activities_modes, activity_indices, stuck_id)
+    durations = group_legs_into_trips_d(total_durations, activity_indices, stuck_id, "duration")
+    distances = group_legs_into_trips_d(total_distances, activity_indices, stuck_id, "distance")
+    # print(trips)
+    # print(distances)
+    # print(durations)
+    routes = list(routes)
     utilities = []
     betaTrans = -1
     match subpopulation:
@@ -245,6 +265,7 @@ def calculate_travel_utility(trips, distances, durations, subpopulation, routes,
         # print(trips[i])
         STotal = 0
         transferCount = count_transfers(trips[i])
+        # print("routes i :"+str(routes[i]))
         for j in range(len(trips[i])):
             # print(trips[i][j])
             # print("distance is: "+str(distances[i][j]))
@@ -321,11 +342,20 @@ def calculate_travel_utility(trips, distances, durations, subpopulation, routes,
                     gammaDist = -2e-4
             STime = betaTrav*(durations[i][j]/3600)
             # print("STime: "+str(STime))
-            tollcost = assign_tolls(tolls, routes[i][j], trips[i][j])
+            tollcost = -1* assign_tolls(tolls, routes[i], trips[i][j])
+            # print("tolls: "+str(tolls))
+            # print("routes: "+str(routes[i][j]))
+            # print("trips: "+str(trips[i][j]))
+            # print("toll cost: "+str(tollcost))
             SMon = betaMon * tollcost
             # print("Smon: "+str(SMon))
             SDist = (betaDist + (betaMon*gammaDist))*distances[i][j]
+            # print("betaDist: "+str(betaDist))            
+            # print("betaMon: "+str(betaMon))            
+            # print("gamma: "+str(gammaDist))            
+            # print("distance: "+str(distances[i][j]))
             # print("SDist: "+str(SDist))
+            # print(CMode)
             STotal_temp = CMode + STime + SMon + SDist 
             STotal += STotal_temp
         STrans = transferCount * betaTrans
@@ -333,60 +363,145 @@ def calculate_travel_utility(trips, distances, durations, subpopulation, routes,
         STotal += STrans
         # print("STotal: "+str(STotal))
         utilities.append(STotal)
-    return utilities
+    return(utilities)
 
-
-def get_activities(activity_modes, activity_indices):
+def get_activities(activity_modes, activity_indices, stuck_index):
     activities = []
     for i in activity_indices:
-        activities.append(activity_modes[i])
+        if i<stuck_index:
+            activities.append(activity_modes[i])
     return activities
 
-def get_activity_durations(activity_indices, all_durations, all_activities_trips):
+def opening_times_adjust(activities, activity_start_times, activity_end_times):
+    new_ast = []
+    new_aet = []
+    for i in range(len(activities)):
+        match activities[i]:
+            case "home":
+                open = 0
+                close = 115200
+            case "work":
+                open = 25200
+                close = 70200
+            case "other":
+                open = 0
+                close = 115200
+            case "shop": 
+                open = 30600
+                close = 70200
+            case "education":
+                open = (8*3600)+(30*60)
+                close = (17*3600)
+            case "visit":
+                open = 0
+                close = 115200
+            case "medical":
+                open = (9*3600)
+                close = (18*3600)
+            case "business":
+                open = 27000
+                close = 72000
+            case "escort_home":
+                open = 0
+                close = 115200
+            case "escort_work":
+                open = (7*3600)
+                close = (19*3600)+(30*60)
+            case "escort_business":
+                open = (7*3600)
+                close = (19*3600)+(30*60)
+            case "escort_education":
+                open = (8*3600)+(30*60)
+                close = (17*3600)
+            case "escort_other":
+                open = 0
+                close = 115200
+            case "escort_shop":
+                open = (8*3600)+(30*60)
+                close = (19*3600)+(30*60) 
+            case _:
+                print("dodgy activity type")
+                open = np.nan
+                close = np.nan
+        if activity_start_times[i]<open:
+            new_ast.append(open)
+        else:
+            new_ast.append(activity_start_times[i])
+
+        if activity_end_times[i]>close:
+            new_aet.append(close)
+        else:
+            new_aet.append(activity_end_times[i])
+    return(new_ast, new_aet)
+
+
+def get_activity_timings(activity_indices, all_durations, all_activities_trips):
     activity_start_times = []
     activity_end_times = []
-    all_durations = pd.to_timedelta(all_durations, errors="coerce").seconds
-
+    all_durations = pd.to_timedelta(all_durations, errors="coerce").total_seconds() 
     for i in range(len(activity_indices)):
         schedEndTime = all_durations[activity_indices[i]]
         if activity_indices[i]==0:
             startTime = 0
         else:
             prevEndTime = all_durations[activity_indices[i-1]]
+            # print("pet: "+str(prevEndTime))
             x1 = activity_indices[i-1]+1
             x2 = activity_indices[i]
-            startTime = prevEndTime+sum(all_durations[x1:x2])  
+            # print(all_durations[x1:x2])
+            # print("x1: "+str(x1))
+            # print("x1: "+str(all_durations[x1]))
+            # print("x2: "+str(x2))
+            # print("x2: "+str(all_durations[x2]))
+            startTime = prevEndTime+sum(all_durations[x1:x2]) 
+        if ((startTime >=  86400) and (i != len(activity_indices)-1)) or  ((startTime >= 115200) and (i == len(activity_indices)-1) ):  
+        # if (startTime >=  86400) and (startTime < 115200) and (i != len(activity_indices)-1) : 
+             stuck_index = activity_indices[i] #stuck index is the index of the activity that does not begin
+             break
         if startTime >= schedEndTime:
             realEndTime = startTime +1
         else:
             realEndTime = schedEndTime
+        stuck_index = activity_indices[-1]+2 #remember that stuck index is related to the total durations index
         activity_start_times.append(startTime)
         activity_end_times.append(realEndTime)
     # print("start: "+str(activity_start_times))
     # print("end: "+str(activity_end_times))
     
-    for i in range(1, len(activity_end_times)):
-        if activity_end_times[i] < activity_end_times[i-1]:
-            activity_end_times[i] += 24*3600  #account for wraparound
+    # #for i in range(1, len(activity_end_times)):
+    # if activity_end_times[-1] < activity_end_times[-2]:
+    #         activity_end_times[i] += 24*3600  #account for wraparound
+    #         print("adjusted2")
     # print("end new: "+str(activity_end_times))
-   
-    activity_durations = list(map(operator.sub, list(activity_end_times), list(activity_start_times)))
-   
-    if all_activities_trips[0] == all_activities_trips[-1]:
-        activity_durations[0]=activity_durations[0]+((24*3600)-activity_start_times[-1]) #make it wrap around to midnight
+
+    if (all_activities_trips[0] != all_activities_trips[-1]) & (stuck_index == activity_indices[-1]+2): #only set to midnight for non-stuck agents who don't wrap around
+        activity_end_times[-1] = 24*3600 #set non-wraparound activities to end at midnight
+
+    activities = get_activities(all_activities_trips, activity_indices, stuck_index)
+    new_activity_start_times, new_activity_end_times = opening_times_adjust(activities, activity_start_times, activity_end_times)
+
+    return(new_activity_start_times, new_activity_end_times, stuck_index)    
+
+
+
+def get_activity_durations(activity_starts, activity_ends, all_activities_trips, stuck_index):
+
+    activity_durations = list(map(operator.sub, list(activity_ends), list(activity_starts)))
+    activity_durations = [1 if i== 0 else i for i in activity_durations ] # handles zero durations from missed activities
+    # print(activity_durations)
+    activity_durations = [i if i>0 else 0 for i in activity_durations ] #handles negative durations from missing opening hours
+
+    if (all_activities_trips[0] == all_activities_trips[-1]) & (stuck_index > len(all_activities_trips)): #only wrap if activity is same and they don't get stuck
+        activity_durations[0] = activity_durations[0]+activity_durations[-1] 
         activity_durations.pop() #remove last activity duration as it has been included in the frist activity
     
-    for k in range(len(activity_durations)):
-        if activity_durations[k]== 0:
-            activity_durations[k] = 1e-5
-    
     return(activity_durations)     
-# TODO: account for non-wraparound effect - HOW DOES THIS WORK
-# TODO: when accounting for wraparound effect the final "end time" is basically ignored - is this ok?
-# TODO: account for if someone arrives after departure -> set activity length to 1 second and continue on
-# TODO: cutoff when not achieving full activity plan - up to 32 hours / journey longer than expected departure
+# TODO: negative durations due to wraparound  
 
-def calculate_activity_utility(activities, durations):
+
+def calculate_activity_utility(activity_modes, activity_indices, stuck_index, durations):
+    activities = get_activities(activity_modes, activity_indices, stuck_index)
+
     utilities = []
     # betaEarly = 0
     # betaLate = 0
@@ -395,8 +510,9 @@ def calculate_activity_utility(activities, durations):
     # betaShort = 0
     prio = 1
     durations = [a/3600 for a in durations]  #put it back into hours
-    if activities[-1] == activities[0]:
-        activities.pop() #remove the last activity for wraparound
+
+    if (activities[-1] == activities[0]) & (stuck_index > len(activity_modes)):
+        activities.pop() #TODO: ignore this for stuck agents
     for i in range(len(activities)):
         # print(activities[i])
         # print(durations[i])
@@ -450,8 +566,13 @@ def calculate_activity_utility(activities, durations):
                 tTyp = np.nan
         # print("tTyp: "+str(tTyp))
         t0 = tTyp*np.exp(-1/prio)
+        if durations[i]> t0:
         # print("t0: "+str(t0))
-        SDur = betaPerf*tTyp*np.log(durations[i]/t0)
+            SDur = betaPerf*tTyp*np.log(durations[i]/t0)
+        elif durations[i]>0: 
+            SDur = -1* betaPerf*tTyp/t0*(t0-durations[i])
+        else:
+            SDur = 0
         SWait = 0 #since betaWait is zero. Otherwise, will need to encode open/close times for activities to find out how long waiting       
         SLate = 0 #since betaLate is zero. Otherwise, will need to encode latest start times for activities to find out how late   
         SEarly = 0 #since betaEarly is zero. Otherwise, will need to encode earliest end times for activities to find out how early   
@@ -461,6 +582,7 @@ def calculate_activity_utility(activities, durations):
         # print("STotal: "+str(STotal))
         utilities.append(STotal)
     return utilities
+
 
 def assign_tolls(tolls, route, mode):
     toll_sum_temp = 0
@@ -477,3 +599,10 @@ def assign_tolls(tolls, route, mode):
             toll_sum_temp += float(toll_temp)
     # print(tolls_list)        
     return(toll_sum_temp)
+
+def calculate_stuck_penalty(total_activities_modes, stuck_id):
+    if stuck_id < len(total_activities_modes):
+        penalty = -24*10.5 # hard coded from the data for ease atm
+    else:
+        penalty = 0
+    return penalty
